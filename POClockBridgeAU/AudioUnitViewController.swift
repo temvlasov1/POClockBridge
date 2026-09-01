@@ -1,12 +1,13 @@
 import AudioToolbox
 import CoreAudioKit
+import Dispatch
+import Foundation
 import UIKit
 
 final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
     private var audioUnit: POClockAudioUnit?
     private let statusLabel = UILabel()
     private let detailLabel = UILabel()
-    private let meter = UIProgressView(progressViewStyle: .default)
     private let thresholdSlider = UISlider()
     private let smoothingSlider = UISlider()
     private let phaseSlider = UISlider()
@@ -15,12 +16,15 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
     private let channelControl = UISegmentedControl(items: ["L", "R"])
     private let ppqnControl = UISegmentedControl(items: ["Auto", "1", "2", "4", "12", "24", "48"])
     private let outputControl = UISegmentedControl(items: ["Tap", "Clock", "Both"])
-    private var timer: Timer?
-
     func createAudioUnit(with componentDescription: AudioComponentDescription) throws -> AUAudioUnit {
         let unit = try POClockAudioUnit(componentDescription: componentDescription, options: [])
         audioUnit = unit
-        if isViewLoaded { bindUI() }
+        // Hosts are allowed to instantiate an Audio Unit away from the main
+        // thread. Even reading view lifecycle state must stay on main.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isViewLoaded else { return }
+            self.bindUI()
+        }
         return unit
     }
 
@@ -34,21 +38,23 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
         view.addSubview(scrollView)
 
         let title = UILabel()
-        title.text = "PO CLOCK BRIDGE"
+        title.text = "PO CLOCK BRIDGE • 0.3"
         title.font = .monospacedSystemFont(ofSize: 20, weight: .bold)
         title.textAlignment = .center
 
         statusLabel.font = .monospacedDigitSystemFont(ofSize: 33, weight: .semibold)
-        statusLabel.text = "— BPM"
+        statusLabel.text = "READY"
         statusLabel.textAlignment = .center
 
         detailLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         detailLabel.numberOfLines = 2
         detailLabel.textAlignment = .center
-        detailLabel.text = "SEARCHING"
+        detailLabel.text = "BUILD 6 • STABLE UI\nClock detection runs in the audio engine"
 
-        meter.progressTintColor = .systemGreen
-        meter.trackTintColor = .secondarySystemFill
+        let refreshButton = UIButton(type: .system)
+        refreshButton.setTitle("Refresh BPM (manual)", for: .normal)
+        refreshButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+        refreshButton.addTarget(self, action: #selector(refreshStatus), for: .touchUpInside)
 
         configureSegmented(channelControl, identifier: "inputChannel")
         configureSegmented(ppqnControl, identifier: "inputPPQN")
@@ -66,7 +72,7 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
             title,
             statusLabel,
             detailLabel,
-            meter,
+            refreshButton,
             separator(),
             segmentedRow(title: "Clock channel", control: channelControl),
             segmentedRow(title: "Input PPQN", control: ppqnControl),
@@ -95,21 +101,10 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
             stack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -20),
             stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 18),
             stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -18),
-            stack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40),
-            meter.heightAnchor.constraint(equalToConstant: 8)
+            stack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
         ])
 
         bindUI()
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        bindUI()
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        stopStatusTimer()
     }
 
     private func separator() -> UIView {
@@ -197,9 +192,38 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
         audioUnit?.resetClockPhase()
     }
 
+    @objc private func refreshStatus() {
+        guard let audioUnit else {
+            statusLabel.text = "WAITING"
+            detailLabel.text = "Audio Unit is not connected yet"
+            return
+        }
+
+        let measuredBPM = Double(audioUnit.detectedBPM)
+        guard measuredBPM > 1 else {
+            statusLabel.text = "— BPM"
+            detailLabel.text = "WAITING FOR CLOCK • tap Refresh after two pulses"
+            return
+        }
+
+        // Pocket Operator shows a nominal integer tempo, while the physical
+        // sync oscillator can be a few tenths away. Present the nominal value
+        // when it is unambiguous, but keep the measured period in the engine:
+        // quantizing MIDI scheduling itself would create long-term drift.
+        let nearestInteger = measuredBPM.rounded()
+        let isNominalInteger = abs(measuredBPM - nearestInteger) <= 0.75
+        statusLabel.text = isNominalInteger
+            ? String(format: "%.0f BPM", nearestInteger)
+            : String(format: "%.2f BPM", measuredBPM)
+        detailLabel.text = String(
+            format: "MEASURED %.2f • jitter %.2f ms\nMIDI clock follows the physical input",
+            measuredBPM,
+            audioUnit.jitterMs)
+    }
+
     private func bindUI() {
-        stopStatusTimer()
-        guard let audioUnit else { return }
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard audioUnit != nil else { return }
 
         thresholdSlider.value = Float(parameter("thresholdHigh")?.value ?? 0.30)
         smoothingSlider.value = Float(parameter("smoothing")?.value ?? 0.18)
@@ -210,43 +234,5 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
         autoThresholdSwitch.isOn = (parameter("autoThreshold")?.value ?? 1) >= 0.5
         transportSwitch.isOn = (parameter("transport")?.value ?? 1) >= 0.5
         thresholdSlider.isEnabled = !autoThresholdSwitch.isOn
-
-        // AUM creates the AU view offscreen once during node setup, then closes
-        // it again before the user opens the plugin window. Do not leave UIKit
-        // animation work running for that detached view.
-        guard viewIfLoaded?.window != nil else { return }
-
-        timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) {
-            [weak self, weak audioUnit] _ in
-            guard let self, let audioUnit else { return }
-            let bpm = audioUnit.detectedBPM
-            self.statusLabel.text = bpm > 1 ? String(format: "%.2f BPM", bpm) : "— BPM"
-            if audioUnit.isLocked {
-                self.detailLabel.text = String(
-                    format: "LOCKED • PPQN %.0f • jitter %.2f ms\nphase %+.2f ms • pulses %llu",
-                    audioUnit.effectiveInputPPQN,
-                    audioUnit.jitterMs,
-                    audioUnit.phaseErrorMs,
-                    audioUnit.pulseCount)
-            } else {
-                self.detailLabel.text = String(
-                    format: "SEARCHING • peak %.3f\nthreshold %.3f",
-                    audioUnit.inputPeak,
-                    audioUnit.effectiveThreshold)
-            }
-            // Repeated UIProgressView animations can outlive AUM's temporary
-            // hidden view and trap UIKit's in-process animation manager.
-            self.meter.setProgress(min(1.0, audioUnit.inputPeak), animated: false)
-        }
-        timer?.tolerance = 0.03
-    }
-
-    private func stopStatusTimer() {
-        timer?.invalidate()
-        timer = nil
-    }
-
-    deinit {
-        stopStatusTimer()
     }
 }
