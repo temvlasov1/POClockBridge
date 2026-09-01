@@ -51,10 +51,10 @@ targets:
     platform: iOS
     sources:
       - path: POClockBridgeApp
-    info:
-      path: POClockBridgeApp/Info.plist
     settings:
       base:
+        INFOPLIST_FILE: POClockBridgeApp/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
         PRODUCT_BUNDLE_IDENTIFIER: com.poclockbridge.app
         PRODUCT_NAME: POClockBridgeApp
         CODE_SIGN_STYLE: Automatic
@@ -73,10 +73,10 @@ targets:
     sources:
       - path: POClockBridgeAU
       - path: Core
-    info:
-      path: POClockBridgeAU/Info.plist
     settings:
       base:
+        INFOPLIST_FILE: POClockBridgeAU/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
         PRODUCT_BUNDLE_IDENTIFIER: com.poclockbridge.app.au
         PRODUCT_NAME: POClockBridgeAU
         PRODUCT_MODULE_NAME: POClockBridgeAU
