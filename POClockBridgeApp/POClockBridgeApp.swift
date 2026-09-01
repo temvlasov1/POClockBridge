@@ -36,7 +36,7 @@ struct ContentView: View {
                     setupStep(1, "Create a stereo hardware-input channel for the AI‑Micro.")
                     setupStep(2, "Insert PO Clock Bridge in the channel’s effect slot.")
                     setupStep(3, "Open AUM’s MIDI routing matrix and route the plug-in MIDI output to MIDI Control.")
-                    setupStep(4, "MIDI-learn note 60 (C3) to AUM Tap Tempo, or route F8 Clock to an app that accepts MIDI Clock.")
+                    setupStep(4, "MIDI-learn note 60 (C4 in AUM) to AUM Tap Tempo, or route F8 Clock to an app that accepts MIDI Clock.")
                 }
 
                 Section("Ableton Link") {
@@ -44,7 +44,7 @@ struct ContentView: View {
                 }
 
                 Section("Build") {
-                    Text("PO Clock Bridge 0.3.0 • build 6 • iOS 16+")
+                    Text("PO Clock Bridge 0.4.0 • build 7 • iOS 16+")
                         .font(.footnote.monospaced())
                         .foregroundStyle(.secondary)
                 }
