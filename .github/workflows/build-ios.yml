@@ -1,0 +1,64 @@
+name: Build unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Core tests + iOS device build
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show Apple toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Test, build, inspect, and package
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: POClockBridge-unsigned
+          path: |
+            .build/artifacts/POClockBridge-unsigned.ipa
+            .build/artifacts/POClockBridge-unsigned.ipa.sha256
+            .build/artifacts/xcodebuild.log
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: POClockBridge-failed-build-log
+          path: .build/artifacts/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
