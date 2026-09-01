@@ -162,7 +162,7 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
     }
 
     private func parameter(_ identifier: String) -> AUParameter? {
-        audioUnit?.parameterTree?.parameter(withID: identifier)
+        audioUnit?.parameterTree?.allParameters.first { $0.identifier == identifier }
     }
 
     @objc private func sliderChanged(_ sender: UISlider) {
