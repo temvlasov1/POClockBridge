@@ -27,6 +27,7 @@ struct Capture {
     std::vector<int64_t> starts;
     std::vector<int64_t> stops;
     std::vector<int64_t> taps;
+    std::vector<int64_t> tapOffs;
 };
 
 [[noreturn]] void fail(const char* expression, const char* file, int line) {
@@ -127,6 +128,8 @@ Capture render(Engine& engine,
             if (event.size == 1 && event.data[0] == 0xFC) capture.stops.push_back(absolute);
             if (event.size == 3 && (event.data[0] & 0xF0) == 0x90 &&
                 event.data[2] > 0) capture.taps.push_back(absolute);
+            if (event.size == 3 && (event.data[0] & 0xF0) == 0x80)
+                capture.tapOffs.push_back(absolute);
         }
     }
     return capture;
@@ -323,6 +326,7 @@ void testTapOnlyMode() {
     const Capture capture = render(engine, pulses, pulses.back().sample + 8000);
     CHECK(capture.clocks.empty());
     CHECK(capture.taps.size() >= 4);
+    CHECK(capture.tapOffs.size() == capture.taps.size());
     CHECK(capture.starts.size() == 1);
 }
 
