@@ -269,6 +269,26 @@ void testLongRunDrift() {
     CHECK(std::abs(static_cast<double>(capture.clocks.back()) - expectedLast) <= 1.5);
 }
 
+void testFractionalSourceTempoNoDrift() {
+    Config config = baseConfig();
+    config.phaseCorrection = 0.25;
+    Engine engine(config);
+    constexpr double bpm = 119.5;
+    auto pulses = makePulses(config.sampleRate, bpm, 2.0, 600.0);
+    const int64_t end = pulses.back().sample + 8000;
+    const Capture capture = render(engine, pulses, end, 1024);
+    CHECK(capture.starts.size() == 1);
+    CHECK(capture.stops.empty());
+    CHECK(std::abs(engine.status().bpm - bpm) < 0.05);
+
+    // The PO's panel may call this tempo "120", but following the measured
+    // 119.5 pulse train is what prevents phase drift against its audio.
+    const double tickPeriod = config.sampleRate * 60.0 / (bpm * 24.0);
+    const double expectedLast = static_cast<double>(capture.clocks.front()) +
+        static_cast<double>(capture.clocks.size() - 1) * tickPeriod;
+    CHECK(std::abs(static_cast<double>(capture.clocks.back()) - expectedLast) <= 1.5);
+}
+
 void testPolarities() {
     verifyTempo(120.0, 48000.0, 0.0, 1.0f, 0.10);
     verifyTempo(120.0, 48000.0, 0.0, -1.0f, 0.10);
@@ -329,6 +349,7 @@ int main() {
         {"tempo change 100 -> 128", testTempoChange},
         {"dropout and restart", testDropoutAndRestart},
         {"ten-minute drift", testLongRunDrift},
+        {"fractional PO tempo has no ten-minute drift", testFractionalSourceTempoNoDrift},
         {"both polarities", testPolarities},
         {"44.1/48/96 kHz", testSampleRates},
         {"adaptive threshold", testAdaptiveThreshold},
