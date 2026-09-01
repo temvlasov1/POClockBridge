@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 using poclock::Config;
@@ -13,9 +14,14 @@ using poclock::Engine;
     Engine _engine;
     // Resized only while render resources are being allocated, never in render.
     std::vector<float> _interleavedChannelScratch;
+    // AUv3 hosts may pass output buffers whose mData pointers are null. The
+    // render block must provide stable, preallocated storage before pulling
+    // input into those buffers.
+    std::vector<float> _renderAudioScratch;
 
     std::atomic<double> _sampleRate;
     std::atomic<uint32_t> _maximumFrames;
+    std::atomic<uint32_t> _channelCount;
     std::atomic<uint64_t> _configGeneration;
     uint64_t _appliedConfigGeneration;
     std::atomic<bool> _phaseResetRequested;
@@ -56,6 +62,7 @@ using poclock::Engine;
     if (self) {
         _sampleRate.store(48000.0);
         _maximumFrames.store(4096);
+        _channelCount.store(2);
         _configGeneration.store(1);
         _appliedConfigGeneration = 0;
         _phaseResetRequested.store(false);
@@ -86,6 +93,7 @@ using poclock::Engine;
         _pulseCountAtomic.store(0);
 
         _interleavedChannelScratch.resize(4096);
+        _renderAudioScratch.resize(4096 * 2);
     }
     return self;
 }
@@ -95,11 +103,15 @@ using poclock::Engine;
 }
 
 - (void)prepareWithSampleRate:(double)sampleRate
-                maximumFrames:(AUAudioFrameCount)maximumFrames {
+                maximumFrames:(AUAudioFrameCount)maximumFrames
+                  channelCount:(AUAudioChannelCount)channelCount {
     const uint32_t safeFrames = std::max<uint32_t>(static_cast<uint32_t>(maximumFrames), 64U);
     _sampleRate.store(sampleRate, std::memory_order_relaxed);
     _maximumFrames.store(safeFrames, std::memory_order_relaxed);
+    _channelCount.store(std::clamp<uint32_t>(
+        static_cast<uint32_t>(channelCount), 1U, 2U), std::memory_order_relaxed);
     _interleavedChannelScratch.resize(safeFrames);
+    _renderAudioScratch.resize(static_cast<std::size_t>(safeFrames) * 2U);
 
     Config config = _engine.config();
     config.sampleRate = sampleRate;
@@ -204,11 +216,13 @@ using poclock::Engine;
 - (AUInternalRenderBlock)internalRenderBlock {
     Engine *engine = &_engine;
     std::vector<float> *scratch = &_interleavedChannelScratch;
+    std::vector<float> *renderScratch = &_renderAudioScratch;
     uint64_t *appliedGeneration = &_appliedConfigGeneration;
     int64_t *expectedNextSample = &_expectedNextSample;
 
     auto *sampleRate = &_sampleRate;
     auto *maximumFrames = &_maximumFrames;
+    auto *channelCount = &_channelCount;
     auto *configGeneration = &_configGeneration;
     auto *phaseResetRequested = &_phaseResetRequested;
     auto *thresholdHigh = &_thresholdHighAtomic;
@@ -247,16 +261,64 @@ using poclock::Engine;
                               AURenderPullInputBlock pullInputBlock) {
         (void)outputBusNumber;
         (void)realtimeEventListHead;
-        if (pullInputBlock == nil || outputData == nullptr) {
-            return kAudioUnitErr_NoConnection;
-        }
+        if (outputData == nullptr) return kAudioUnitErr_InvalidPropertyValue;
         if (frameCount > maximumFrames->load(std::memory_order_relaxed)) {
             return kAudioUnitErr_TooManyFramesToProcess;
         }
 
-        const AUAudioUnitStatus pullStatus =
-            pullInputBlock(actionFlags, timestamp, frameCount, 0, outputData);
-        if (pullStatus != noErr) return pullStatus;
+        const UInt32 bufferCount = outputData->mNumberBuffers;
+        if (bufferCount == 0 || bufferCount > 2) {
+            return kAudioUnitErr_FormatNotSupported;
+        }
+
+        // AURenderPullInputBlock requires valid caller-provided buffers. AUM
+        // commonly supplies null output pointers on entry for in-place effects,
+        // so attach our render-lifetime storage before asking it for input.
+        std::size_t scratchOffset = 0;
+        UInt32 totalChannels = 0;
+        const UInt32 configuredChannels = std::max<UInt32>(
+            1, channelCount->load(std::memory_order_relaxed));
+        for (UInt32 index = 0; index < bufferCount; ++index) {
+            AudioBuffer& buffer = outputData->mBuffers[index];
+            UInt32 channels = buffer.mNumberChannels;
+            if (channels == 0) {
+                channels = bufferCount == 1 ? configuredChannels : 1;
+                buffer.mNumberChannels = channels;
+            }
+            totalChannels += channels;
+            const std::size_t sampleCount =
+                static_cast<std::size_t>(frameCount) * channels;
+            const std::size_t byteCount = sampleCount * sizeof(float);
+            if (scratchOffset + sampleCount > renderScratch->size()) {
+                return kAudioUnitErr_TooManyFramesToProcess;
+            }
+            if (buffer.mData == nullptr || buffer.mDataByteSize < byteCount) {
+                buffer.mData = renderScratch->data() + scratchOffset;
+            }
+            buffer.mDataByteSize = static_cast<UInt32>(byteCount);
+            scratchOffset += sampleCount;
+        }
+        if (totalChannels == 0 || totalChannels > 2) {
+            return kAudioUnitErr_FormatNotSupported;
+        }
+
+        if (pullInputBlock != nil) {
+            const AUAudioUnitStatus pullStatus =
+                pullInputBlock(actionFlags, timestamp, frameCount, 0, outputData);
+            if (pullStatus != noErr) return pullStatus;
+        } else {
+            // A host can briefly render an unconnected effect while rebuilding
+            // its graph. Silence is a valid result and must not invalidate AUv3.
+            for (UInt32 index = 0; index < bufferCount; ++index) {
+                AudioBuffer& buffer = outputData->mBuffers[index];
+                if (buffer.mData != nullptr) {
+                    std::memset(buffer.mData, 0, buffer.mDataByteSize);
+                }
+            }
+            if (actionFlags != nullptr) {
+                *actionFlags |= kAudioUnitRenderAction_OutputIsSilence;
+            }
+        }
 
         const uint64_t generation = configGeneration->load(std::memory_order_acquire);
         if (generation != *appliedGeneration) {

@@ -268,7 +268,8 @@ NSInteger modeForPPQN(float ppqn, BOOL automatic) {
     if (![super allocateRenderResourcesAndReturnError:outError]) return NO;
     [_kernel setMIDIOutputEventBlock:self.MIDIOutputEventBlock];
     [_kernel prepareWithSampleRate:outputFormat.sampleRate
-                     maximumFrames:self.maximumFramesToRender];
+                     maximumFrames:self.maximumFramesToRender
+                       channelCount:outputFormat.channelCount];
     return YES;
 }
 

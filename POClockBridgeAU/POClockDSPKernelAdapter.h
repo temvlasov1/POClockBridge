@@ -6,7 +6,8 @@ NS_ASSUME_NONNULL_BEGIN
 @interface POClockDSPKernelAdapter : NSObject
 
 - (void)prepareWithSampleRate:(double)sampleRate
-                maximumFrames:(AUAudioFrameCount)maximumFrames;
+                maximumFrames:(AUAudioFrameCount)maximumFrames
+                  channelCount:(AUAudioChannelCount)channelCount;
 - (void)reset;
 - (void)requestPhaseReset;
 - (void)setMIDIOutputEventBlock:(nullable AUMIDIOutputEventBlock)block;
