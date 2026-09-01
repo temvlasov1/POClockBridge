@@ -197,9 +197,10 @@ void Engine::emit3(uint32_t offset, uint8_t a, uint8_t b, uint8_t c) noexcept {
 
 void Engine::emitTap(uint32_t offset) noexcept {
     if (!config_.sendTapNote) return;
-    const uint8_t status = static_cast<uint8_t>(0x90 | config_.tapChannel);
-    emit3(offset, status, config_.tapNote, 100);
-    emit3(offset, status, config_.tapNote, 0);
+    const uint8_t noteOn = static_cast<uint8_t>(0x90 | config_.tapChannel);
+    const uint8_t noteOff = static_cast<uint8_t>(0x80 | config_.tapChannel);
+    emit3(offset, noteOn, config_.tapNote, 100);
+    emit3(offset, noteOff, config_.tapNote, 0);
 }
 
 void Engine::startAt(int64_t sample, uint32_t offset) noexcept {
