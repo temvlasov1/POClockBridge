@@ -50,8 +50,14 @@ using poclock::Engine;
     std::atomic<bool> _lockedAtomic;
     std::atomic<bool> _runningAtomic;
     std::atomic<uint64_t> _pulseCountAtomic;
+    std::atomic<bool> _testTapRequested;
+    std::atomic<uint64_t> _midiEventCountAtomic;
+    std::atomic<int32_t> _lastMIDIErrorAtomic;
 
-    AUMIDIOutputEventBlock _Nullable _midiOutput;
+    // Retained block stored behind an atomic raw pointer. This lets a render
+    // block fetched early by a host observe a MIDI callback installed later,
+    // without ARC retain/release traffic on the realtime thread.
+    std::atomic<void *> _midiOutputAtomic;
 }
 @end
 
@@ -91,11 +97,20 @@ using poclock::Engine;
         _lockedAtomic.store(false);
         _runningAtomic.store(false);
         _pulseCountAtomic.store(0);
+        _testTapRequested.store(false);
+        _midiEventCountAtomic.store(0);
+        _lastMIDIErrorAtomic.store(noErr);
+        _midiOutputAtomic.store(nullptr);
 
         _interleavedChannelScratch.resize(4096);
         _renderAudioScratch.resize(4096 * 2);
     }
     return self;
+}
+
+- (void)dealloc {
+    void *callback = _midiOutputAtomic.exchange(nullptr, std::memory_order_acq_rel);
+    if (callback != nullptr) CFRelease(callback);
 }
 
 - (void)markConfigChanged {
@@ -146,8 +161,15 @@ using poclock::Engine;
     _phaseResetRequested.store(true, std::memory_order_release);
 }
 
+- (void)requestTestTap {
+    _testTapRequested.store(true, std::memory_order_release);
+}
+
 - (void)setMIDIOutputEventBlock:(AUMIDIOutputEventBlock)block {
-    _midiOutput = [block copy];
+    AUMIDIOutputEventBlock copied = [block copy];
+    void *next = copied != nil ? (__bridge_retained void *)copied : nullptr;
+    void *previous = _midiOutputAtomic.exchange(next, std::memory_order_acq_rel);
+    if (previous != nullptr) CFRelease(previous);
 }
 
 - (float)thresholdHigh { return _thresholdHighAtomic.load(); }
@@ -212,6 +234,11 @@ using poclock::Engine;
 - (BOOL)isLocked { return _lockedAtomic.load(); }
 - (BOOL)isRunning { return _runningAtomic.load(); }
 - (uint64_t)pulseCount { return _pulseCountAtomic.load(); }
+- (BOOL)midiOutputConnected {
+    return _midiOutputAtomic.load(std::memory_order_acquire) != nullptr;
+}
+- (uint64_t)midiEventCount { return _midiEventCountAtomic.load(); }
+- (int32_t)lastMIDIError { return _lastMIDIErrorAtomic.load(); }
 
 - (AUInternalRenderBlock)internalRenderBlock {
     Engine *engine = &_engine;
@@ -248,9 +275,10 @@ using poclock::Engine;
     auto *locked = &_lockedAtomic;
     auto *running = &_runningAtomic;
     auto *pulseCount = &_pulseCountAtomic;
-
-    // Copied when resources are allocated. Hosts install this before rendering.
-    AUMIDIOutputEventBlock midiOutput = _midiOutput;
+    auto *testTapRequested = &_testTapRequested;
+    auto *midiEventCount = &_midiEventCountAtomic;
+    auto *lastMIDIError = &_lastMIDIErrorAtomic;
+    auto *midiOutputAtomic = &_midiOutputAtomic;
 
     return ^AUAudioUnitStatus(AudioUnitRenderActionFlags *actionFlags,
                               const AudioTimeStamp *timestamp,
@@ -394,12 +422,41 @@ using poclock::Engine;
 
         engine->processBlock(clockInput, frameCount, absoluteSample);
 
-        if (midiOutput != nil) {
+        void *midiOutputObject = midiOutputAtomic->load(std::memory_order_acquire);
+        if (midiOutputObject != nullptr) {
             for (std::size_t index = 0; index < engine->eventCount(); ++index) {
                 const auto& event = engine->events()[index];
                 const AUEventSampleTime eventTime = static_cast<AUEventSampleTime>(
                     absoluteSample + event.frameOffset);
-                (void)midiOutput(eventTime, 0, event.size, event.data);
+                const OSStatus result =
+                    ((__bridge AUMIDIOutputEventBlock)midiOutputObject)(
+                        eventTime, 0, event.size, event.data);
+                lastMIDIError->store(result, std::memory_order_relaxed);
+                if (result == noErr) {
+                    midiEventCount->fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+
+            // A UI request is converted to MIDI only here on the audio thread.
+            // The explicit note-off one sample later is accepted more reliably
+            // by MIDI-control learners than a zero-velocity note at the same time.
+            if (testTapRequested->exchange(false, std::memory_order_acq_rel)) {
+                const uint8_t note = static_cast<uint8_t>(std::clamp(
+                    tapNote->load(std::memory_order_relaxed), 0, 127));
+                const uint8_t noteOn[3] = {0x90, note, 100};
+                const uint8_t noteOff[3] = {0x80, note, 0};
+                const AUEventSampleTime onTime = static_cast<AUEventSampleTime>(absoluteSample);
+                const AUEventSampleTime offTime = onTime + (frameCount > 1 ? 1 : 0);
+                const OSStatus onResult =
+                    ((__bridge AUMIDIOutputEventBlock)midiOutputObject)(
+                        onTime, 0, 3, noteOn);
+                const OSStatus offResult =
+                    ((__bridge AUMIDIOutputEventBlock)midiOutputObject)(
+                        offTime, 0, 3, noteOff);
+                const OSStatus result = onResult != noErr ? onResult : offResult;
+                lastMIDIError->store(result, std::memory_order_relaxed);
+                if (onResult == noErr) midiEventCount->fetch_add(1, std::memory_order_relaxed);
+                if (offResult == noErr) midiEventCount->fetch_add(1, std::memory_order_relaxed);
             }
         }
 

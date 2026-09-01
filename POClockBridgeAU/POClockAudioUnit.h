@@ -13,7 +13,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, getter=isLocked) BOOL locked;
 @property (nonatomic, readonly, getter=isClockRunning) BOOL clockRunning;
 @property (nonatomic, readonly) uint64_t pulseCount;
+@property (nonatomic, readonly) BOOL midiOutputConnected;
+@property (nonatomic, readonly) uint64_t midiEventCount;
+@property (nonatomic, readonly) int32_t lastMIDIError;
 - (void)resetClockPhase;
+- (void)sendTestTap;
 @end
 
 NS_ASSUME_NONNULL_END

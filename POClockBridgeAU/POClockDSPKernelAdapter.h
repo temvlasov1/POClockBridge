@@ -10,6 +10,7 @@ NS_ASSUME_NONNULL_BEGIN
                   channelCount:(AUAudioChannelCount)channelCount;
 - (void)reset;
 - (void)requestPhaseReset;
+- (void)requestTestTap;
 - (void)setMIDIOutputEventBlock:(nullable AUMIDIOutputEventBlock)block;
 - (AUInternalRenderBlock)internalRenderBlock;
 
@@ -36,6 +37,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (atomic, readonly, getter=isLocked) BOOL locked;
 @property (atomic, readonly, getter=isRunning) BOOL running;
 @property (atomic, readonly) uint64_t pulseCount;
+@property (atomic, readonly) BOOL midiOutputConnected;
+@property (atomic, readonly) uint64_t midiEventCount;
+@property (atomic, readonly) int32_t lastMIDIError;
 
 @end
 

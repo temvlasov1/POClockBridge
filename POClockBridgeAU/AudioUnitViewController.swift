@@ -6,6 +6,7 @@ import UIKit
 
 final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
     private var audioUnit: POClockAudioUnit?
+    private var refreshWorkItem: DispatchWorkItem?
     private let statusLabel = UILabel()
     private let detailLabel = UILabel()
     private let thresholdSlider = UISlider()
@@ -38,7 +39,7 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
         view.addSubview(scrollView)
 
         let title = UILabel()
-        title.text = "PO CLOCK BRIDGE • 0.3"
+        title.text = "PO CLOCK BRIDGE • 0.4"
         title.font = .monospacedSystemFont(ofSize: 20, weight: .bold)
         title.textAlignment = .center
 
@@ -47,12 +48,12 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
         statusLabel.textAlignment = .center
 
         detailLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        detailLabel.numberOfLines = 2
+        detailLabel.numberOfLines = 4
         detailLabel.textAlignment = .center
-        detailLabel.text = "BUILD 6 • STABLE UI\nClock detection runs in the audio engine"
+        detailLabel.text = "BUILD 7 • LIVE STATUS\nClock detection runs in the audio engine"
 
         let refreshButton = UIButton(type: .system)
-        refreshButton.setTitle("Refresh BPM (manual)", for: .normal)
+        refreshButton.setTitle("Refresh now", for: .normal)
         refreshButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
         refreshButton.addTarget(self, action: #selector(refreshStatus), for: .touchUpInside)
 
@@ -67,6 +68,11 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
         resetButton.setTitle("Phase Reset", for: .normal)
         resetButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
         resetButton.addTarget(self, action: #selector(resetPhase), for: .touchUpInside)
+
+        let testTapButton = UIButton(type: .system)
+        testTapButton.setTitle("SEND TEST C4 (MIDI 60)", for: .normal)
+        testTapButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .bold)
+        testTapButton.addTarget(self, action: #selector(sendTestTap), for: .touchUpInside)
 
         let stack = UIStackView(arrangedSubviews: [
             title,
@@ -85,6 +91,7 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
                       slider: phaseSlider, minimum: 0.0, maximum: 1.0),
             segmentedRow(title: "MIDI output", control: outputControl),
             switchRow(title: "Start / Stop", control: transportSwitch),
+            testTapButton,
             resetButton
         ])
         stack.axis = .vertical
@@ -105,6 +112,20 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
         ])
 
         bindUI()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        startAutomaticRefresh()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        stopAutomaticRefresh()
+        super.viewDidDisappear(animated)
+    }
+
+    deinit {
+        refreshWorkItem?.cancel()
     }
 
     private func separator() -> UIView {
@@ -192,6 +213,34 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
         audioUnit?.resetClockPhase()
     }
 
+    @objc private func sendTestTap() {
+        audioUnit?.sendTestTap()
+        statusLabel.text = "TEST C4 SENT"
+        scheduleAutomaticRefresh(after: 0.15)
+    }
+
+    private func startAutomaticRefresh() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        refreshStatus()
+        scheduleAutomaticRefresh(after: 0.25)
+    }
+
+    private func stopAutomaticRefresh() {
+        refreshWorkItem?.cancel()
+        refreshWorkItem = nil
+    }
+
+    private func scheduleAutomaticRefresh(after delay: TimeInterval) {
+        refreshWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, self.viewIfLoaded?.window != nil else { return }
+            self.refreshStatus()
+            self.scheduleAutomaticRefresh(after: 0.25)
+        }
+        refreshWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
     @objc private func refreshStatus() {
         guard let audioUnit else {
             statusLabel.text = "WAITING"
@@ -200,9 +249,21 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
         }
 
         let measuredBPM = Double(audioUnit.detectedBPM)
+        let midiStatus: String
+        if audioUnit.midiOutputConnected {
+            let error = audioUnit.lastMIDIError
+            midiStatus = error == 0
+                ? "MIDI OUT CONNECTED • sent \(audioUnit.midiEventCount)"
+                : "MIDI OUT ERROR \(error) • sent \(audioUnit.midiEventCount)"
+        } else {
+            midiStatus = "MIDI OUT NOT CONNECTED"
+        }
+
         guard measuredBPM > 1 else {
-            statusLabel.text = "— BPM"
-            detailLabel.text = "WAITING FOR CLOCK • tap Refresh after two pulses"
+            statusLabel.text = audioUnit.pulseCount > 0 ? "STOPPED" : "— BPM"
+            detailLabel.text = audioUnit.pulseCount > 0
+                ? "CLOCK STOPPED • waiting for two new pulses\n\(midiStatus)\nBUILD 7 • AUTO REFRESH"
+                : "WAITING FOR CLOCK • needs two pulses\n\(midiStatus)\nBUILD 7 • AUTO REFRESH"
             return
         }
 
@@ -216,9 +277,11 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
             ? String(format: "%.0f BPM", nearestInteger)
             : String(format: "%.2f BPM", measuredBPM)
         detailLabel.text = String(
-            format: "MEASURED %.2f • jitter %.2f ms\nMIDI clock follows the physical input",
+            format: "%@ • MEASURED %.2f • jitter %.2f ms\n%@\nAUTO REFRESH • MIDI follows physical input",
+            audioUnit.isClockRunning ? "RUNNING" : "LOCKING",
             measuredBPM,
-            audioUnit.jitterMs)
+            audioUnit.jitterMs,
+            midiStatus)
     }
 
     private func bindUI() {

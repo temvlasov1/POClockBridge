@@ -236,6 +236,14 @@ NSInteger modeForPPQN(float ppqn, BOOL automatic) {
 - (BOOL)isMusicDeviceOrEffect { return YES; }
 - (BOOL)canProcessInPlace { return YES; }
 
+// Some hosts install the MIDI callback after asking for internalRenderBlock.
+// Forward every callback update to the realtime adapter instead of relying on
+// the value that happened to be present during resource allocation.
+- (void)setMIDIOutputEventBlock:(AUMIDIOutputEventBlock)MIDIOutputEventBlock {
+    [super setMIDIOutputEventBlock:MIDIOutputEventBlock];
+    [_kernel setMIDIOutputEventBlock:MIDIOutputEventBlock];
+}
+
 - (BOOL)shouldChangeToFormat:(AVAudioFormat *)format forBus:(AUAudioUnitBus *)bus {
     (void)bus;
     return format.commonFormat == AVAudioPCMFormatFloat32 &&
@@ -321,6 +329,10 @@ NSInteger modeForPPQN(float ppqn, BOOL automatic) {
 - (BOOL)isLocked { return _kernel.isLocked; }
 - (BOOL)isClockRunning { return _kernel.isRunning; }
 - (uint64_t)pulseCount { return _kernel.pulseCount; }
+- (BOOL)midiOutputConnected { return _kernel.midiOutputConnected; }
+- (uint64_t)midiEventCount { return _kernel.midiEventCount; }
+- (int32_t)lastMIDIError { return _kernel.lastMIDIError; }
 - (void)resetClockPhase { [_kernel requestPhaseReset]; }
+- (void)sendTestTap { [_kernel requestTestTap]; }
 
 @end
