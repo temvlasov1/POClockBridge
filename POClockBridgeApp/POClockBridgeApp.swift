@@ -44,7 +44,7 @@ struct ContentView: View {
                 }
 
                 Section("Build") {
-                    Text("PO Clock Bridge 0.2 • iOS 16+")
+                    Text("PO Clock Bridge 0.3.0 • build 6 • iOS 16+")
                         .font(.footnote.monospaced())
                         .foregroundStyle(.secondary)
                 }
