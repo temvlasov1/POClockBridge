@@ -102,6 +102,16 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
         bindUI()
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        bindUI()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        stopStatusTimer()
+    }
+
     private func separator() -> UIView {
         let line = UIView()
         line.backgroundColor = .separator
@@ -188,7 +198,7 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
     }
 
     private func bindUI() {
-        timer?.invalidate()
+        stopStatusTimer()
         guard let audioUnit else { return }
 
         thresholdSlider.value = Float(parameter("thresholdHigh")?.value ?? 0.30)
@@ -200,6 +210,11 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
         autoThresholdSwitch.isOn = (parameter("autoThreshold")?.value ?? 1) >= 0.5
         transportSwitch.isOn = (parameter("transport")?.value ?? 1) >= 0.5
         thresholdSlider.isEnabled = !autoThresholdSwitch.isOn
+
+        // AUM creates the AU view offscreen once during node setup, then closes
+        // it again before the user opens the plugin window. Do not leave UIKit
+        // animation work running for that detached view.
+        guard viewIfLoaded?.window != nil else { return }
 
         timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) {
             [weak self, weak audioUnit] _ in
@@ -219,11 +234,19 @@ final class AudioUnitViewController: AUViewController, AUAudioUnitFactory {
                     audioUnit.inputPeak,
                     audioUnit.effectiveThreshold)
             }
-            self.meter.setProgress(min(1.0, audioUnit.inputPeak), animated: true)
+            // Repeated UIProgressView animations can outlive AUM's temporary
+            // hidden view and trap UIKit's in-process animation manager.
+            self.meter.setProgress(min(1.0, audioUnit.inputPeak), animated: false)
         }
+        timer?.tolerance = 0.03
+    }
+
+    private func stopStatusTimer() {
+        timer?.invalidate()
+        timer = nil
     }
 
     deinit {
-        timer?.invalidate()
+        stopStatusTimer()
     }
 }
