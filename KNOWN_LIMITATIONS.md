@@ -31,7 +31,7 @@ source; the default is 2.
 ## AUM host behavior
 
 AUM is not treated as a generic MIDI Clock slave by this project. Use MIDI Learn
-to map note 60/C3 to Tap Tempo. Exact MIDI routing labels can vary by AUM version.
+to map note 60/C4 to Tap Tempo. Exact MIDI routing labels can vary by AUM version.
 Other hosts must expose MIDI output from an `aumf` AUv3 for Clock/Tap routing.
 
 ## Sideloading and capabilities

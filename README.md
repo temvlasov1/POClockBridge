@@ -1,4 +1,4 @@
-# PO Clock Bridge 0.2
+# PO Clock Bridge 0.2.1
 
 PO Clock Bridge — iOS 16+ приложение-контейнер и AUv3 Music Effect (`aumf`).
 Плагин пропускает стерео без изменений, обнаруживает аналоговые sync-импульсы
@@ -6,7 +6,7 @@ Pocket Operator в выбранном аудиоканале и выдаёт sam
 
 - MIDI Clock 24 PPQN (`F8`);
 - MIDI Start (`FA`) и один MIDI Stop (`FC`) при dropout;
-- MIDI note 60 (C3) раз в четверть для MIDI Learn → Tap Tempo в AUM.
+- MIDI note 60 (C4 в нотации AUM) раз в четверть для MIDI Learn → Tap Tempo в AUM.
 
 Сигнальный тракт:
 
@@ -111,7 +111,7 @@ Apple ID. Проект не обходит Apple code signing.
 4. Откройте MIDI routing matrix AUM. Источником выберите MIDI output экземпляра
    PO Clock Bridge.
 5. Для AUM направьте его в **MIDI Control**, включите MIDI Learn для Tap Tempo и
-   дайте пройти note 60/C3. Для другого clock-capable приложения направьте туда
+   дайте пройти note 60/C4. Для другого clock-capable приложения направьте туда
    `F8/FA/FC` напрямую.
 6. При остановке PO через три ожидаемых input-интервала плагин выдаст ровно один
    `FC`, снимет LOCK и будет ждать новую пару импульсов.

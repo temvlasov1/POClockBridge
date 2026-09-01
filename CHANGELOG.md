@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.0
+
+- Fixed AUv3 MIDI output discovery when a host installs its callback after it
+  has already fetched the render block.
+- Added a render-thread `SEND TEST C4` diagnostic, MIDI connection/error status,
+  and a successful-event counter.
+- Added safe 4 Hz live UI updates for running tempo, tempo changes, clock stop,
+  and restart without the UIKit animation timer that caused build 5 to crash.
+- Tap messages now use an explicit MIDI note-off for host-control compatibility.
+- Corrected note 60 naming to C4 as displayed by AUM.
+
+## 0.2.1
+
+- Fixed AUv3 invalidation in hosts that provide null output buffer pointers on
+  entry to the render block, including the AUM device graph.
+- Added preallocated render-lifetime audio storage and safe silent rendering
+  while an effect input is temporarily disconnected.
+
 ## 0.2.0
 
 - Replaced guessed first-pulse clock start with deterministic two-pulse lock.
